@@ -9,7 +9,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 import java.math.BigDecimal;
@@ -44,6 +47,77 @@ public class StudentService {
     
     public List<TutorshipAnnouncement> getAllAnnouncements() {
         return announcementRepository.findAll();
+    }
+
+    /**
+     * Returns available 1-hour slots for a given announcement and date.
+     * If tutor has no schedule configured, we assume availability from 08:00 to 20:00.
+     */
+    public List<LocalDateTime> getAvailableSlots(Long announcementId, Long studentId, LocalDate date) {
+        User student = userRepository.findById(studentId)
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado"));
+
+        TutorshipAnnouncement announcement = announcementRepository.findById(announcementId)
+                .orElseThrow(() -> new RuntimeException("Anuncio no encontrado"));
+
+        User tutor = announcement.getTutor();
+
+        // Base windows from schedule (or default 08:00-20:00)
+        List<Schedule> schedules = scheduleRepository.findByTutorAndDayOfWeek(tutor, date.getDayOfWeek());
+        List<TimeWindow> windows = new ArrayList<>();
+        if (schedules.isEmpty()) {
+            windows.add(new TimeWindow(LocalTime.of(8, 0), LocalTime.of(20, 0)));
+        } else {
+            for (Schedule s : schedules) {
+                windows.add(new TimeWindow(s.getStartTime(), s.getEndTime()));
+            }
+        }
+
+        // Tutor reservations for that date (any announcement by that tutor)
+        LocalDateTime dayStart = date.atStartOfDay();
+        LocalDateTime dayEnd = date.plusDays(1).atStartOfDay();
+        List<Reservation> tutorReservations = reservationRepository.findByAnnouncement_TutorAndDateTimeBetween(tutor, dayStart, dayEnd);
+
+        // Student reservations for that date
+        List<Reservation> studentReservations = reservationRepository.findByStudentAndDateTimeBetween(student, dayStart, dayEnd);
+
+        List<LocalDateTime> slots = new ArrayList<>();
+        for (TimeWindow w : windows) {
+            LocalTime t = w.start;
+            while (!t.plusHours(1).isAfter(w.end)) {
+                LocalDateTime slotStart = date.atTime(t);
+                LocalDateTime slotEnd = slotStart.plusHours(1);
+
+                boolean overlapsTutor = tutorReservations.stream().anyMatch(r -> overlaps(slotStart, slotEnd, r.getDateTime(), r.getDateTime().plusHours(1)));
+                if (overlapsTutor) {
+                    t = t.plusHours(1);
+                    continue;
+                }
+
+                boolean overlapsStudent = studentReservations.stream().anyMatch(r -> overlaps(slotStart, slotEnd, r.getDateTime(), r.getDateTime().plusHours(1)));
+                if (overlapsStudent) {
+                    t = t.plusHours(1);
+                    continue;
+                }
+
+                slots.add(slotStart);
+                t = t.plusHours(1);
+            }
+        }
+        return slots;
+    }
+
+    private boolean overlaps(LocalDateTime aStart, LocalDateTime aEnd, LocalDateTime bStart, LocalDateTime bEnd) {
+        return aStart.isBefore(bEnd) && aEnd.isAfter(bStart);
+    }
+
+    private static class TimeWindow {
+        final LocalTime start;
+        final LocalTime end;
+        TimeWindow(LocalTime start, LocalTime end) {
+            this.start = start;
+            this.end = end;
+        }
     }
     
     public Reservation bookTutorship(Long studentId, ReservationDTO dto) {

@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -34,6 +35,16 @@ public class StudentController {
     @GetMapping("/announcements")
     public ResponseEntity<List<TutorshipAnnouncement>> getAllAnnouncements() {
         return ResponseEntity.ok(studentService.getAllAnnouncements());
+    }
+
+    @GetMapping("/announcements/{announcementId}/available-slots")
+    public ResponseEntity<?> getAvailableSlots(@PathVariable Long announcementId, @RequestParam String date) {
+        try {
+            LocalDate parsed = LocalDate.parse(date);
+            return ResponseEntity.ok(studentService.getAvailableSlots(announcementId, getCurrentUserId(), parsed));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
     
     @PostMapping("/reservations")
